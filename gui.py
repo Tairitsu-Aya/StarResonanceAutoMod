@@ -1,4 +1,4 @@
-"""
+﻿"""
 Graphical user interface for the Star Rail module optimisation tool.
 
 This GUI wraps the existing ``star_railway_monitor.py`` script and provides
@@ -459,7 +459,7 @@ class StarRailwayGUI(QMainWindow):
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setStyleSheet("background-color: rgba(0, 0, 0, 0.6);")
         self.loading_movie = QMovie()
-        spinner_path = os.path.join(os.path.dirname(__file__), "spinner.gif")
+        spinner_path = os.path.join(os.path.dirname(__file__), "assets", "spinner.gif")
         if os.path.exists(spinner_path):
             self.loading_movie.setFileName(spinner_path)
         self.loading_label.setMovie(self.loading_movie)
