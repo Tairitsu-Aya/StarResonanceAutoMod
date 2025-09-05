@@ -139,8 +139,11 @@ def parse_log_file(path: str) -> List[dict]:
         pattern = r"=== 第(\d+)名搭配 ==="
         parts = re.split(pattern, text)
         for i in range(1, len(parts), 2):
+            rank = int(parts[i])
             block = parts[i + 1]
-            combos.append(_parse_block(block))
+            combo = _parse_block(block)
+            combo["rank"] = rank
+            combos.append(combo)
     except Exception:
         return []
     return combos
@@ -789,8 +792,8 @@ class ResultWindow(QMainWindow):
         scroll.setStyleSheet("border: none;")
         container = QWidget()
         grid = QGridLayout()
-        grid.setContentsMargins(5, 5, 5, 5)
-        grid.setSpacing(5)
+        grid.setContentsMargins(10, 10, 10, 10)
+        grid.setSpacing(10)
         container.setLayout(grid)
         for i, combo in enumerate(combos):
             frame = QFrame()
@@ -798,8 +801,13 @@ class ResultWindow(QMainWindow):
                 "background-color: rgba(0, 0, 0, 0.7); color: white; border-radius: 5px;"
             )
             vbox = QVBoxLayout()
-            vbox.setContentsMargins(5, 5, 5, 5)
+            vbox.setContentsMargins(10, 10, 10, 10)
+            vbox.setSpacing(8)
             frame.setLayout(vbox)
+            rank = combo.get("rank", i + 1)
+            rank_label = QLabel(f"第{rank}名")
+            rank_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+            vbox.addWidget(rank_label)
             lines: List[str] = []
             if combo.get("total"):
                 lines.append(combo["total"])
@@ -814,6 +822,7 @@ class ResultWindow(QMainWindow):
             label = QLabel("\n".join(lines))
             label.setWordWrap(True)
             label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            label.setStyleSheet("font-size: 14px;")
             vbox.addWidget(label)
             grid.addWidget(frame, i // 2, i % 2)
         scroll.setWidget(container)
