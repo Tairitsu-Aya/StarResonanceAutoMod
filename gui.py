@@ -1,4 +1,4 @@
-"""
+﻿"""
 Graphical user interface for the Star Rail module optimisation tool.
 
 This GUI wraps the existing ``star_railway_monitor.py`` script and provides
@@ -36,8 +36,11 @@ can adjust ``SCRIPT_NAME`` below.
 """
 
 import os
+import re
 import sys
 import subprocess
+import json
+import hashlib
 from typing import List
 
 from PyQt5.QtCore import (
@@ -77,6 +80,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QFrame,
     QSplitter,
+    QScrollArea,
+    QGridLayout,
 )
 
 # Path to the solver script.  You can modify this constant if your
@@ -116,6 +121,64 @@ CATEGORIES = {
 # correspond to the ``--match-count`` parameter.  You can adjust the
 # range or individual options here.
 MATCH_COUNTS = [1, 2, 3, 4, 5]
+
+
+def parse_log_file(path: str) -> List[dict]:
+    """Parse a solver log file and extract combination information."""
+    combos: List[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            lines: List[str] = []
+            for line in fh:
+                stripped = line.strip()
+                if stripped.startswith("=" * 50) or stripped.startswith("模组搭配优化 -"):
+                    continue
+                if stripped.startswith("统计信息"):
+                    break
+                if stripped:
+                    lines.append(stripped)
+        text = "\n".join(lines)
+        pattern = r"=== 第(\d+)名搭配 ==="
+        parts = re.split(pattern, text)
+        for i in range(1, len(parts), 2):
+            rank = int(parts[i])
+            block = parts[i + 1]
+            combo = _parse_block(block)
+            combo["rank"] = rank
+            combos.append(combo)
+    except Exception:
+        return []
+    return combos
+
+
+def _parse_block(block: str) -> dict:
+    """Parse a single combination block."""
+    total = ""
+    power = ""
+    modules: List[str] = []
+    attrs: List[str] = []
+    lines = [l for l in block.splitlines() if l.strip()]
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith("总属性值"):
+            total = line
+        elif line.startswith("战斗力"):
+            power = line
+        elif line.startswith("模组列表"):
+            i += 1
+            while i < len(lines) and not lines[i].startswith("属性分布"):
+                modules.append(lines[i].strip())
+                i += 1
+            continue
+        elif line.startswith("属性分布"):
+            i += 1
+            while i < len(lines):
+                attrs.append(lines[i].strip())
+                i += 1
+            break
+        i += 1
+    return {"total": total, "power": power, "modules": modules, "attrs": attrs}
 
 
 class CheckableComboBox(QComboBox):
@@ -330,6 +393,7 @@ class StarRailwayGUI(QMainWindow):
             # Fallback size if image missing
             self.resize(1200, 800)
             self._bg_pixmap = None
+        self.last_result_combos: List[dict] | None = None
         # Build UI components
         self.init_ui()
 
@@ -433,7 +497,7 @@ class StarRailwayGUI(QMainWindow):
         # Row with expand button aligned to the left
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
-        button_row.setSpacing(0)
+        button_row.setSpacing(10)
         # Expand output button
         self.expand_output_button = QPushButton("放大显示")
         self.expand_output_button.setFixedHeight(24)
@@ -443,6 +507,24 @@ class StarRailwayGUI(QMainWindow):
         )
         self.expand_output_button.clicked.connect(self.show_output_window)
         button_row.addWidget(self.expand_output_button)
+        # View collection button
+        self.view_collect_button = QPushButton("查看收藏")
+        self.view_collect_button.setFixedHeight(24)
+        self.view_collect_button.setStyleSheet(
+            "QPushButton { background-color: rgba(0, 120, 215, 0.8); color: white; border: none; padding: 4px 8px; }"
+            "QPushButton:hover { background-color: rgba(0, 120, 215, 1.0); }"
+        )
+        self.view_collect_button.clicked.connect(self.show_collect_window)
+        button_row.addWidget(self.view_collect_button)
+        # Show last result window again
+        self.view_result_button = QPushButton("组合查看")
+        self.view_result_button.setFixedHeight(24)
+        self.view_result_button.setStyleSheet(
+            "QPushButton { background-color: rgba(0, 120, 215, 0.8); color: white; border: none; padding: 4px 8px; }"
+            "QPushButton:hover { background-color: rgba(0, 120, 215, 1.0); }"
+        )
+        self.view_result_button.clicked.connect(self.show_last_result_window)
+        button_row.addWidget(self.view_result_button)
         button_row.addStretch(1)
         bottom_layout.addLayout(button_row)
         # Add the output text edit underneath
@@ -459,7 +541,7 @@ class StarRailwayGUI(QMainWindow):
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setStyleSheet("background-color: rgba(0, 0, 0, 0.6);")
         self.loading_movie = QMovie()
-        spinner_path = os.path.join(os.path.dirname(__file__), "spinner.gif")
+        spinner_path = os.path.join(os.path.dirname(__file__), "assets", "spinner.gif")
         if os.path.exists(spinner_path):
             self.loading_movie.setFileName(spinner_path)
         self.loading_label.setMovie(self.loading_movie)
@@ -678,16 +760,169 @@ class StarRailwayGUI(QMainWindow):
         self.output_edit.ensureCursorVisible()
 
     def on_solver_finished(self):
-        """Clean up after the solver finishes."""
+        """Clean up after the solver finishes and display results."""
         self.loading_label.hide()
         self.loading_movie.stop()
         self.solve_button.setEnabled(True)
+        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        try:
+            files = [
+                os.path.join(logs_dir, f)
+                for f in os.listdir(logs_dir)
+                if f.endswith(".log")
+            ]
+            if files:
+                latest = max(files, key=os.path.getmtime)
+                combos = parse_log_file(latest)
+                if combos:
+                    self.last_result_combos = combos
+                    self.result_window = ResultWindow(combos, self)
+                    self.result_window.show()
+        except Exception as e:
+            self.append_output(f"解析日志失败: {e}\n")
+        self.refresh_log_list()
 
     def show_output_window(self):
         """Open a new resizable window to display the full output text."""
         text = self.output_edit.toPlainText()
         window = OutputWindow(text, self)
         window.show()
+
+    def show_collect_window(self):
+        """Open a window displaying all collected combos."""
+        collect_dir = os.path.join(os.path.dirname(__file__), "collect")
+        combos: List[dict] = []
+        if os.path.isdir(collect_dir):
+            for name in os.listdir(collect_dir):
+                if name.endswith(".json"):
+                    path = os.path.join(collect_dir, name)
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            combos.append(json.load(f))
+                    except Exception:
+                        pass
+        if combos:
+            self.collect_window = ResultWindow(combos, self, title="收藏夹")
+            self.collect_window.show()
+
+    def show_last_result_window(self) -> None:
+        """Reopen the last solver result window if results are available."""
+        if self.last_result_combos:
+            self.result_window = ResultWindow(self.last_result_combos, self)
+            self.result_window.show()
+        else:
+            self.append_output("暂无结果，请先运行求解。\n")
+
+
+class ResultWindow(QMainWindow):
+    """Display parsed solver results in a scrollable grid layout."""
+
+    def __init__(
+        self,
+        combos: List[dict],
+        parent: QWidget | None = None,
+        *,
+        title: str = "搭配结果",
+    ):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.resize(1637, 1088)
+        central = QWidget()
+        central.setObjectName("resultWindowCentral")
+        outer = QVBoxLayout()
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(5)
+        central.setLayout(outer)
+        central.setStyleSheet(
+            "#resultWindowCentral { background-color: rgba(0, 0, 0, 0.8); border-radius: 8px; }"
+        )
+        self.title_bar = CustomTitleBar(self)
+        self.title_bar.title_label.setText(title)
+        outer.addWidget(self.title_bar)
+        self.collect_dir = os.path.join(os.path.dirname(__file__), "collect")
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none;")
+        container = QWidget()
+        grid = QGridLayout()
+        grid.setContentsMargins(10, 10, 10, 10)
+        grid.setSpacing(10)
+        container.setLayout(grid)
+        for i, combo in enumerate(combos):
+            frame = QFrame()
+            frame.setStyleSheet(
+                "background-color: rgba(0, 0, 0, 0.7); color: white; border-radius: 5px;"
+            )
+            vbox = QVBoxLayout()
+            vbox.setContentsMargins(10, 10, 10, 10)
+            vbox.setSpacing(8)
+            frame.setLayout(vbox)
+            rank = combo.get("rank", i + 1)
+            top_row = QHBoxLayout()
+            rank_label = QLabel(f"第{rank}名")
+            rank_label.setStyleSheet("font-weight: bold; font-size: 24px;")
+            top_row.addWidget(rank_label)
+            top_row.addStretch(1)
+            combo_hash = hashlib.md5(
+                json.dumps(combo, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+            collect_path = os.path.join(self.collect_dir, f"{combo_hash}.json")
+            star_button = QPushButton("☆")
+            star_button.setFixedSize(48, 48)
+            star_button.setStyleSheet(
+                "QPushButton { border: none; background: transparent; color: white; font-size: 28px; }"
+            )
+            if os.path.exists(collect_path):
+                star_button.setText("★")
+                star_button.setStyleSheet(
+                    "QPushButton { border: none; background: transparent; color: yellow; font-size: 28px; }"
+                )
+            star_button.clicked.connect(
+                lambda _, path=collect_path, combo=combo, btn=star_button: self.toggle_collect(path, combo, btn)
+            )
+            top_row.addWidget(star_button)
+            vbox.addLayout(top_row)
+            lines: List[str] = []
+            if combo.get("total"):
+                lines.append(combo["total"])
+            if combo.get("power"):
+                lines.append(combo["power"])
+            if combo.get("modules"):
+                lines.append("模组列表:")
+                lines.extend(combo["modules"])
+            if combo.get("attrs"):
+                lines.append("属性分布:")
+                lines.extend(combo["attrs"])
+            label = QLabel("\n".join(lines))
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            label.setStyleSheet("font-size: 22px;")
+            vbox.addWidget(label)
+            grid.addWidget(frame, i // 2, i % 2)
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+        outer.setStretchFactor(scroll, 1)
+        self.setCentralWidget(central)
+        #self.setStyleSheet("* { font-size: 22px; }")
+
+    def toggle_collect(self, path: str, combo: dict, button: QPushButton) -> None:
+        """Toggle collection state for a combo and update button appearance."""
+        if os.path.exists(path):
+            os.remove(path)
+            button.setText("☆")
+            button.setStyleSheet(
+                "QPushButton { border: none; background: transparent; color: white; font-size: 28px;}"
+            )
+        else:
+            os.makedirs(self.collect_dir, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(combo, f, ensure_ascii=False, indent=2)
+            button.setText("★")
+            button.setStyleSheet(
+                "QPushButton { border: none; background: transparent; color: yellow; font-size: 28px;}"
+            )
+
 
 
 class OutputWindow(QMainWindow):
