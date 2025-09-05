@@ -4,6 +4,39 @@
 
 一款专为《星痕共鸣》游戏开发的星痕共鸣模组智能筛选工具，通过网络数据包分析自动获取游戏中的模组数据，并使用 C++优化的算法计算最优模组搭配方案。
 
+## GUI更新（ver1.0 2025.9.6  by Tairitsu-Aya）
+**--新增图形化界面，方便不熟悉编程的用户快速使用**
+
+**--新增模组搭配展示窗口，方便快速浏览对比所有模组搭配**
+
+**--新增模组搭配收藏功能，把你心仪的搭配收藏起来，便于进行对比分析**
+
+### 使用方式简介
+
+**1.打开界面**
+![主界面操作示意图](assets/readme/GUI_new.png)
+
+**2.设置选项**
+![主界面设置完毕](assets/readme/GUI_set.png)
+
+**3.点击求解**
+
+点击后界面进入加载中
+
+![界面加载中](assets/readme/GUI_calculate.png)
+
+此时需要点击退出登录以返回游戏主界面，随后再次登录角色以获取模组信息
+
+获取后自动进行计算，计算完成后弹出符合条件的模组方案，按照评分从高到低排列
+
+![resultWindow](assets/readme/GUI_result.png)
+
+点击每个方案右上方的星形按钮即可收藏方案，可以在主界面点击按钮打开已储存的收藏
+
+如果不慎关闭了结果窗口，点击主界面的查看组合按钮即可再次打开
+
+
+
 ## 🌟 核心功能
 
 - **🔍 实时模组抓取**: 通过网络抓包实时获取游戏中的模组数据
@@ -12,7 +45,7 @@
 - **📊 综合评分系统**: 为每个推荐搭配计算游戏中的战斗力评分
 - **🚀 自动化流程**: 一键启动，自动完成整个筛选过程
 
-## 📦 两种使用方式
+## 📦 无GUI的两种使用方式
 
 ### 🎮 方式一：可执行文件（推荐普通用户）
 
@@ -111,7 +144,7 @@
 | `--match-count`        | `-mc`     | 整数   | 模组需包含的指定属性数量                    | `-mc 2` (默认:1)                            |
 | `--enumeration-mode`   | `-enum`   | 开关   | 启用枚举模式直接运算(推荐和 -attr 一起使用) | `-enum`                                     |
 | `--debug`              | `-d`      | 开关   | 启用调试模式输出详细日志                    | `-d`                                        |
-| `----min-attr-sum`     | `-mas`    | 多值   | 指定求解后包含的属性词条总和的最小值          | `-mas 智力加持 20 -mas 暴击专注 20`          |
+| `--min-attr-sum`       | `-mas`    | 多值   | 指定求解后包含的属性词条总和的最小值          | `-mas 智力加持 20 -mas 暴击专注 20`          |
 
 #### ⚠️ 使用注意事项
 
@@ -147,7 +180,7 @@
 **1. 克隆项目**
 
 ```bash
-git clone https://github.com/fudiyangjin/StarResonanceAutoMod.git
+git clone https://github.com/Tairitsu-Aya/StarResonanceAutoMod.git
 cd StarResonanceAutoMod
 ```
 
@@ -183,6 +216,9 @@ python star_railway_monitor.py -a -attr 智力加持 暴击专注 -d
 
 # 查看所有参数
 python star_railway_monitor.py --help
+
+#以GUI界面运行
+python gui.py
 ```
 
 #### 🔧 开发者功能
@@ -210,6 +246,8 @@ StarResonanceAutoMod/
 ├── logging_config.py         # 日志配置
 ├── BlueProtobuf_pb2.py       # 协议buffer定义
 ├── requirements.txt          # Python依赖
+├── assets                    # 素材文件夹
+│   ├── readme/               # 说明文档使用插图
 ├── cpp_extension/            # C++性能扩展
 │   ├── setup.py             # 编译脚本
 │   └── src/                 # C++源码
