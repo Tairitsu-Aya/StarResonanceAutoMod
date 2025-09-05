@@ -393,6 +393,7 @@ class StarRailwayGUI(QMainWindow):
             # Fallback size if image missing
             self.resize(1200, 800)
             self._bg_pixmap = None
+        self.last_result_combos: List[dict] | None = None
         # Build UI components
         self.init_ui()
 
@@ -496,7 +497,7 @@ class StarRailwayGUI(QMainWindow):
         # Row with expand button aligned to the left
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
-        button_row.setSpacing(0)
+        button_row.setSpacing(10)
         # Expand output button
         self.expand_output_button = QPushButton("放大显示")
         self.expand_output_button.setFixedHeight(24)
@@ -515,6 +516,15 @@ class StarRailwayGUI(QMainWindow):
         )
         self.view_collect_button.clicked.connect(self.show_collect_window)
         button_row.addWidget(self.view_collect_button)
+        # Show last result window again
+        self.view_result_button = QPushButton("组合查看")
+        self.view_result_button.setFixedHeight(24)
+        self.view_result_button.setStyleSheet(
+            "QPushButton { background-color: rgba(0, 120, 215, 0.8); color: white; border: none; padding: 4px 8px; }"
+            "QPushButton:hover { background-color: rgba(0, 120, 215, 1.0); }"
+        )
+        self.view_result_button.clicked.connect(self.show_last_result_window)
+        button_row.addWidget(self.view_result_button)
         button_row.addStretch(1)
         bottom_layout.addLayout(button_row)
         # Add the output text edit underneath
@@ -765,6 +775,7 @@ class StarRailwayGUI(QMainWindow):
                 latest = max(files, key=os.path.getmtime)
                 combos = parse_log_file(latest)
                 if combos:
+                    self.last_result_combos = combos
                     self.result_window = ResultWindow(combos, self)
                     self.result_window.show()
         except Exception as e:
@@ -793,6 +804,14 @@ class StarRailwayGUI(QMainWindow):
         if combos:
             self.collect_window = ResultWindow(combos, self, title="收藏夹")
             self.collect_window.show()
+
+    def show_last_result_window(self) -> None:
+        """Reopen the last solver result window if results are available."""
+        if self.last_result_combos:
+            self.result_window = ResultWindow(self.last_result_combos, self)
+            self.result_window.show()
+        else:
+            self.append_output("暂无结果，请先运行求解。\n")
 
 
 class ResultWindow(QMainWindow):
