@@ -61,7 +61,7 @@
 
 #### 🔽 获取工具
 
-1. 从 [Release 页面](https://github.com/fudiyangjin/StarResonanceAutoMod/releases) 下载最新版本的 `StarResonanceAutoMod.exe`
+1. 从 [Release 页面](https://github.com/Tairitsu-Aya/StarResonanceAutoMod/releases) 下载最新版本的 `StarResonanceAutoMod.exe`
 2. 将文件放置在任意文件夹中
 
 #### 🚀 快速开始
@@ -190,14 +190,7 @@ cd StarResonanceAutoMod
 pip install -r requirements.txt
 ```
 
-> 📝 **依赖说明**:
->
-> - `scapy>=2.5.0`: 网络抓包库
-> - `zstandard>=0.21.0`: 数据压缩库
-> - `protobuf>=4.21.0`: 协议缓冲区库
-> - `pybind11>=2.10.0`: C++扩展绑定库
-
-**4. 编译 C++扩展**
+**3. 编译 C++扩展**
 
 ```bash
 cd cpp_extension
@@ -278,7 +271,7 @@ StarResonanceAutoMod/
 ### 获取帮助
 
 - 查看详细日志：使用 `--debug` 参数
-- 提交 Issue：[GitHub Issues](https://github.com/fudiyangjin/StarResonanceAutoMod/issues)
+- 提交 Issue：[GitHub Issues](https://github.com/Tairitsu-Aya/StarResonanceAutoMod/issues)
 - 查看日志文件：`logs/` 目录下的最新日志
 
 ## 🙏 鸣谢
