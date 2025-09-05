@@ -1,41 +1,4 @@
-﻿"""
-Graphical user interface for the Star Rail module optimisation tool.
-
-This GUI wraps the existing ``star_railway_monitor.py`` script and provides
-interactive widgets for selecting optimisation parameters.  The layout is
-split into four distinct panels:
-
-* **Module filter panel** – allows the user to choose the equipment
-  category, required attribute list, attributes to exclude and the
-  number of matching modules to return.  Multi‑select drop‑downs are
-  implemented via a custom checkable combobox.
-* **Solver panel** – exposes solver options such as enumeration mode
-  and debug logging.  A table lets the user add one or more
-  ``--min‑attr‑sum`` constraints via a combination of attribute and
-  minimum count.  Clicking the “开始求解” button spawns the solver in
-  a separate thread and streams its console output to the output
-  viewer.  A simple loading animation is displayed while the solver
-  runs.
-* **Output panel** – shows the combined stdout/stderr of the solver
-  process.  Selecting a log file from the log list will also display
-  its contents here.
-* **Log panel** – lists all ``*.log`` files in the ``logs`` folder
-  relative to this script.  Clicking a file name loads its contents.
-
-The top of the window contains a custom title bar with its own close
-and minimise buttons.  The entire interface sits on top of a
-semi‑transparent window whose background image is loaded from
-``gui_bg.jpg``.  Colours and fonts are tuned for a dark background.
-
-To run this GUI you will need PyQt5 (or PySide2) installed.  On
-Windows the script may need to be started with ``pythonw`` to avoid a
-separate console window.  When the “开始求解” button is pressed the
-GUI invokes ``python star_railway_monitor.py`` with the selected
-options.  If the solver script is located in a different folder you
-can adjust ``SCRIPT_NAME`` below.
-"""
-
-import os
+﻿import os
 import re
 import sys
 import subprocess
@@ -83,23 +46,32 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QGridLayout,
 )
+# ==== Packaging-aware path helpers ====
+def is_frozen() -> bool:
+    return hasattr(sys, "_MEIPASS") or getattr(sys, "frozen", False)
 
-# Path to the solver script.  You can modify this constant if your
-# ``star_railway_monitor.py`` resides somewhere else.
+def resource_path(*paths: str) -> str:
+    base = getattr(sys, "_MEIPASS", os.path.dirname(__file__))
+    return os.path.join(base, *paths)
+
+def _app_base_dir() -> str:
+    # Windows LOCALAPPDATA; fallback to user home
+    base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    root = os.path.join(base, "StarResonanceGUI")
+    os.makedirs(os.path.join(root, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(root, "collect"), exist_ok=True)
+    return root
+
+def app_logs_dir() -> str:
+    return os.path.join(_app_base_dir(), "logs")
+
+def app_collect_dir() -> str:
+    return os.path.join(_app_base_dir(), "collect")
+
 SCRIPT_NAME = os.path.join(os.path.dirname(__file__), "star_railway_monitor.py")
 
-# Path to the background image bundled alongside this file.  If you
-# wish to use a different background simply replace ``gui_bg.jpg`` or
-# adjust this constant accordingly.
-# Background image for the window.  The default image shipped with this
-# application resides under the ``assets`` directory.  If you wish to
-# change the background simply replace the file at this path or point
-# the constant elsewhere.
-BACKGROUND_IMAGE = os.path.join(os.path.dirname(__file__), "assets", "gui_bg_80pct.jpg")
+BACKGROUND_IMAGE = resource_path("assets", "gui_bg_80pct.jpg")
 
-# List of attribute names used for the drop‑downs.  These names should
-# match exactly those expected by ``star_railway_monitor.py``.  If
-# additional attributes become available you can extend this list.
 ATTRIBUTES = [
     "力量加持", "敏捷加持", "智力加持", "特攻伤害", "精英打击", "特攻治疗加持", "专精治疗加持",
     "施法专注", "攻速专注", "暴击专注", "幸运专注", "抵御魔法", "抵御物理",
@@ -107,9 +79,6 @@ ATTRIBUTES = [
     "极-生命波动", "极-生命汲取", "极-全队幸暴",
 ]
 
-# Human‑readable category names mapped to the actual command line
-# values.  Feel free to edit the keys or values to reflect your
-# translation or script behaviour.  The default category is ``全部``.
 CATEGORIES = {
     "全部": "全部",
     "攻击": "攻击",
@@ -117,10 +86,7 @@ CATEGORIES = {
     "辅助": "辅助",
 }
 
-# Default list of match counts available in the UI.  These values
-# correspond to the ``--match-count`` parameter.  You can adjust the
-# range or individual options here.
-MATCH_COUNTS = [1, 2, 3, 4, 5]
+MATCH_COUNTS = [1, 2, 3]
 
 
 def parse_log_file(path: str) -> List[dict]:
@@ -193,19 +159,12 @@ class CheckableComboBox(QComboBox):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Use a standard item model so we can attach check states
-        self.setModel(QStandardItemModel(self))
-        # Connect the pressed signal to our handler to toggle check state
-        self.view().pressed.connect(self.handle_item_pressed)
-        # Enable editing of the display text so we can show selected items
-        # directly in the combobox.  We mark the line edit as read only to
-        # prevent manual typing by the user.
+        self.setModel(QStandardItemModel(self))        
+        self.view().pressed.connect(self.handle_item_pressed)        
         self.setEditable(True)
         if self.lineEdit() is not None:
-            self.lineEdit().setReadOnly(True)
-        # Display placeholder when nothing is selected
+            self.lineEdit().setReadOnly(True)        
         self._placeholder_text = "请选择"
-        # Set minimal width to avoid collapsing to tiny size
         self.setSizeAdjustPolicy(QComboBox.AdjustToContents)
 
     def add_check_item(self, text: str):
@@ -251,13 +210,10 @@ class CheckableComboBox(QComboBox):
 
 
 class SolverWorker(QThread):
-    """Worker thread that runs the solver script and emits its output.
-
-    The worker takes a list of command line arguments and spawns a
-    subprocess running ``python star_railway_monitor.py`` with those
-    arguments.  Both stdout and stderr are captured and emitted via
-    :attr:`output_signal`.  When the process finishes the
-    :attr:`finished_signal` is emitted so the GUI can hide the loader.
+    """运行求解器脚本并输出其结果的工作线程。
+    接收命令行参数列表，并以此参数启动子进程运行``python star_railway_monitor.py``。
+    通过:attr:`output_signal`输出。
+    进程完成时触发:attr:`finished_signal`。
     """
 
     output_signal = pyqtSignal(str)
@@ -268,37 +224,72 @@ class SolverWorker(QThread):
         self.args = args
 
     def run(self):
-        # Compose the full command: python <script> <args>
-        cmd = [sys.executable, SCRIPT_NAME] + self.args
-        print("RUN:", " ".join(cmd))
         try:
-            # Start the subprocess and capture combined stdout/stderr
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-            )
-            # Stream output line by line
-            if process.stdout:
-                for line in process.stdout:
-                    self.output_signal.emit(line)
-            process.wait()
+            if is_frozen():
+                # Frozen: call solver inline
+                old_cwd = os.getcwd()
+                os.chdir(_app_base_dir())
+                try:
+                    import logging
+                    import importlib
+                    # set up logger handler to forward to GUI
+                    class QtSignalHandler(logging.Handler):
+                        def emit(inner, record):
+                            msg = inner.format(record)
+                            self.output_signal.emit(msg + "\n")
+                    handler = QtSignalHandler()
+                    handler.setFormatter(logging.Formatter("%(message)s"))
+                    root = logging.getLogger()
+                    root.addHandler(handler)
+                    root.setLevel(logging.INFO)
+
+                    # ensure module import works whether bundled or not
+                    try:
+                        import star_railway_monitor as srm
+                    except Exception as ie:
+                        self.output_signal.emit(f"导入 star_railway_monitor 失败: {ie}\\n")
+                        return
+
+                    old_argv = sys.argv[:]
+                    try:
+                        sys.argv = ["star_railway_monitor.py"] + self.args
+                        if hasattr(srm, "main"):
+                            srm.main()
+                        else:
+                            # 猜测入口：如果没有 main，退回到解析器
+                            if hasattr(srm, "run"):
+                                srm.run()
+                            else:
+                                self.output_signal.emit("未找到 star_railway_monitor 的入口函数(main/run)。\\n")
+                    finally:
+                        sys.argv = old_argv
+                        root.removeHandler(handler)
+                finally:
+                    os.chdir(old_cwd)
+            else:
+                # Dev: spawn python process, unify CWD to writable app dir so logs go to the same place
+                cmd = [sys.executable, SCRIPT_NAME] + self.args
+                print("RUN:", " ".join(cmd))
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=_app_base_dir(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                )
+                if process.stdout:
+                    for line in process.stdout:
+                        self.output_signal.emit(line)
+                process.wait()
         except Exception as e:
-            # Emit any exception information to the output area
-            self.output_signal.emit(f"Error running solver: {e}\n")
+            self.output_signal.emit(f"Error running solver: {e}\\n")
         finally:
             self.finished_signal.emit()
-
-
 class CustomTitleBar(QWidget):
-    """A custom title bar implementing minimise and close buttons.
-
-    This widget replaces the default window frame.  Dragging the title
-    bar moves the window and clicking the buttons triggers minimise or
-    close actions on the parent window.
+    """
+    实现最小化和关闭按钮的自定义标题栏。
     """
 
     def __init__(self, parent=None):
@@ -317,11 +308,9 @@ class CustomTitleBar(QWidget):
         self.title_label.setStyleSheet("font-weight: bold; font-size: 18px;")
         self.title_label.setAlignment(Qt.AlignCenter)
 
-        # Spacer between title and buttons
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-        # Minimise button (larger for better visibility)
         self.minimise_button = QPushButton("–")
         self.minimise_button.setFixedSize(28, 28)
         self.minimise_button.setStyleSheet(
@@ -330,7 +319,7 @@ class CustomTitleBar(QWidget):
         )
         self.minimise_button.clicked.connect(self.on_minimise)
 
-        # Close button (larger for better visibility)
+        # Close button
         self.close_button = QPushButton("✕")
         self.close_button.setFixedSize(28, 28)
         self.close_button.setStyleSheet(
@@ -344,7 +333,6 @@ class CustomTitleBar(QWidget):
         layout.addWidget(self.minimise_button)
         layout.addWidget(self.close_button)
         self.setLayout(layout)
-        # Increase the height to make dragging easier
         self.setFixedHeight(35)
         self.setStyleSheet("background-color: rgba(0, 0, 0, 0.4); color: white;")
 
@@ -364,7 +352,6 @@ class CustomTitleBar(QWidget):
 
     def mouseMoveEvent(self, event):
         if self._mouse_press_pos and self._mouse_move_pos and event.buttons() == Qt.LeftButton:
-            # Calculate offset and move window
             global_pos = event.globalPos()
             diff = global_pos - self._mouse_press_pos
             new_pos = self._mouse_move_pos + diff
@@ -384,7 +371,6 @@ class StarRailwayGUI(QMainWindow):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        # Load background image and set window size accordingly
         if os.path.exists(BACKGROUND_IMAGE):
             pix = QPixmap(BACKGROUND_IMAGE)
             self._bg_pixmap = pix
@@ -401,34 +387,21 @@ class StarRailwayGUI(QMainWindow):
         self.solver_worker: SolverWorker | None = None
 
     def paintEvent(self, event):
-        """Override paintEvent for transparency when frameless."""
-        # We don't explicitly paint the background here because the
-        # background image is applied via stylesheet on the central widget.
-        # Simply delegate to the parent implementation.
         super().paintEvent(event)
 
     def init_ui(self):
-        # Central widget with background applied via stylesheet.  The
-        # ``central`` widget will fill the entire window and its
-        # stylesheet draws the background image.  We keep margins
-        # around the content to give elements breathing room.
         central = QWidget()
         central.setObjectName("central")
-        # Build a layout for central; contents margins define padding
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
         central.setLayout(layout)
-        # 半透明遮罩，降低背景图“存在感”
+        # 半透明遮罩，降低背景图存在感
         self.bg_dimmer = QWidget(central)
         self.bg_dimmer.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.bg_dimmer.setStyleSheet("background-color: rgba(0,0,0,0.5);")
         self.bg_dimmer.setGeometry(central.rect())
         self.bg_dimmer.lower()  # 放到其他控件下面（但在背景图之上）
-
-        # Apply the background image via stylesheet on the central
-        # widget.  ``background-position`` ensures the image stays
-        # centered when the window is resized.
         if os.path.exists(BACKGROUND_IMAGE):
             img_path = BACKGROUND_IMAGE.replace("\\", "/")
             central.setStyleSheet(
@@ -438,46 +411,45 @@ class StarRailwayGUI(QMainWindow):
                 f"background-position: center;"
                 f"}}"
             )
-        # Title bar
+        
         self.title_bar = CustomTitleBar(self)
         layout.addWidget(self.title_bar)
-        # Splitter to separate top (controls) and bottom (output)
+        
         self.vertical_splitter = QSplitter(Qt.Vertical)
         self.vertical_splitter.setHandleWidth(1)
         layout.addWidget(self.vertical_splitter)
         layout.setStretchFactor(self.vertical_splitter, 1)
-        # Top horizontal splitter for left and right panels
+        
         self.top_splitter = QSplitter(Qt.Horizontal)
         self.top_splitter.setHandleWidth(1)
-        # Left panel: module and solver controls
+        
         left_panel = QWidget()
         left_layout = QVBoxLayout()
-        # Reduce spacing between controls to make the panel more compact
+        
         left_layout.setSpacing(8)
         left_layout.setContentsMargins(10, 10, 10, 10)
         left_panel.setLayout(left_layout)
-        # Module filter group
+
         self.init_module_panel(left_layout)
-        # Solver panel
         self.init_solver_panel(left_layout)
-        # Flexible spacer to push content to the top
+        
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         left_layout.addWidget(spacer)
-        # Right panel: log viewer
+        
         right_panel = QWidget()
         right_layout = QVBoxLayout()
         right_layout.setSpacing(8)
         right_layout.setContentsMargins(10, 10, 10, 10)
         right_panel.setLayout(right_layout)
         self.init_log_panel(right_layout)
-        # Add panels to top splitter
+        
         self.top_splitter.addWidget(left_panel)
         self.top_splitter.addWidget(right_panel)
         # 70/30 horizontal split
         self.top_splitter.setStretchFactor(0, 7)
         self.top_splitter.setStretchFactor(1, 3)
-        # Output panel for bottom half
+        
         self.output_edit = QTextEdit()
         self.output_edit.setReadOnly(True)
         self.output_edit.setStyleSheet(
@@ -487,18 +459,17 @@ class StarRailwayGUI(QMainWindow):
             "padding: 5px;"
         )
         self.output_edit.setPlaceholderText("输出内容将在此显示...")
-        # Construct a container for the output area: it holds a
-        # button to expand the output and the text edit itself.
+        
         bottom_container = QWidget()
         bottom_layout = QVBoxLayout()
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(5)
         bottom_container.setLayout(bottom_layout)
-        # Row with expand button aligned to the left
+        
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(10)
-        # Expand output button
+        
         self.expand_output_button = QPushButton("放大显示")
         self.expand_output_button.setFixedHeight(24)
         self.expand_output_button.setStyleSheet(
@@ -507,7 +478,7 @@ class StarRailwayGUI(QMainWindow):
         )
         self.expand_output_button.clicked.connect(self.show_output_window)
         button_row.addWidget(self.expand_output_button)
-        # View collection button
+        
         self.view_collect_button = QPushButton("查看收藏")
         self.view_collect_button.setFixedHeight(24)
         self.view_collect_button.setStyleSheet(
@@ -516,7 +487,7 @@ class StarRailwayGUI(QMainWindow):
         )
         self.view_collect_button.clicked.connect(self.show_collect_window)
         button_row.addWidget(self.view_collect_button)
-        # Show last result window again
+        
         self.view_result_button = QPushButton("组合查看")
         self.view_result_button.setFixedHeight(24)
         self.view_result_button.setStyleSheet(
@@ -527,10 +498,10 @@ class StarRailwayGUI(QMainWindow):
         button_row.addWidget(self.view_result_button)
         button_row.addStretch(1)
         bottom_layout.addLayout(button_row)
-        # Add the output text edit underneath
+        
         bottom_layout.addWidget(self.output_edit)
         bottom_layout.setStretchFactor(self.output_edit, 1)
-        # Insert top and bottom containers into vertical splitter
+        
         self.vertical_splitter.addWidget(self.top_splitter)
         self.vertical_splitter.addWidget(bottom_container)
         # 60/40 vertical split
@@ -541,7 +512,7 @@ class StarRailwayGUI(QMainWindow):
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setStyleSheet("background-color: rgba(0, 0, 0, 0.6);")
         self.loading_movie = QMovie()
-        spinner_path = os.path.join(os.path.dirname(__file__), "assets", "spinner.gif")
+        spinner_path = resource_path("assets", "spinner.gif")
         if os.path.exists(spinner_path):
             self.loading_movie.setFileName(spinner_path)
         self.loading_label.setMovie(self.loading_movie)
@@ -569,7 +540,6 @@ class StarRailwayGUI(QMainWindow):
     def resizeEvent(self, event):
         """Update the loading overlay geometry on resize."""
         super().resizeEvent(event)
-        # Resize the loading overlay to cover the entire central widget
         central = self.centralWidget()
         if central and self.loading_label:
             self.loading_label.setGeometry(central.rect())
@@ -578,29 +548,27 @@ class StarRailwayGUI(QMainWindow):
 
     def init_module_panel(self, parent_layout: QVBoxLayout):
         """Initialise the module selection panel."""
-        # Category selection
+        
         cat_label = QLabel("选择类型 (category):")
         self.category_combo = QComboBox()
         for key in CATEGORIES.keys():
             self.category_combo.addItem(key)
         self.category_combo.setCurrentText("全部")
-        # Attributes selection (multi)
         attr_label = QLabel("选择词条 (attributes):")
         self.attributes_combo = CheckableComboBox()
         for attr in ATTRIBUTES:
             self.attributes_combo.add_check_item(attr)
-        # Exclude attributes (multi)
+        
         excl_label = QLabel("排除词条 (exclude attributes):")
         self.exclude_combo = CheckableComboBox()
         for attr in ATTRIBUTES:
             self.exclude_combo.add_check_item(attr)
-        # Match count selection
+        
         match_label = QLabel("匹配数量 (match count):")
         self.match_combo = QComboBox()
         for n in MATCH_COUNTS:
             self.match_combo.addItem(str(n))
         self.match_combo.setCurrentIndex(0)
-        # Lay out
         parent_layout.addWidget(cat_label)
         parent_layout.addWidget(self.category_combo)
         parent_layout.addWidget(attr_label)
@@ -674,7 +642,7 @@ class StarRailwayGUI(QMainWindow):
     def refresh_log_list(self):
         """Scan the ``logs`` directory and populate the list widget."""
         self.log_list.clear()
-        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        logs_dir = app_logs_dir()
         if os.path.isdir(logs_dir):
             files = [f for f in os.listdir(logs_dir) if f.endswith(".log")]
             for fname in sorted(files):
@@ -684,7 +652,7 @@ class StarRailwayGUI(QMainWindow):
     def on_log_clicked(self, item: QListWidgetItem):
         """Load and display the selected log file in the output area."""
         log_name = item.text()
-        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        logs_dir = app_logs_dir()
         path = os.path.join(logs_dir, log_name)
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -734,20 +702,20 @@ class StarRailwayGUI(QMainWindow):
 
     def on_solve(self):
         """Callback when the solve button is clicked."""
-        # Clear previous output
+        
         self.output_edit.clear()
-        # Build command line arguments
+        
         args = self.build_args()
-        # Start loading animation – cover the entire central widget
+        
         central = self.centralWidget()
         if central:
             self.loading_label.setGeometry(central.rect())
         if self.loading_movie.fileName():
             self.loading_movie.start()
         self.loading_label.show()
-        # Disable solve button to prevent reentry
+        
         self.solve_button.setEnabled(False)
-        # Spawn worker thread
+        
         self.solver_worker = SolverWorker(args)
         self.solver_worker.output_signal.connect(self.append_output)
         self.solver_worker.finished_signal.connect(self.on_solver_finished)
@@ -764,7 +732,7 @@ class StarRailwayGUI(QMainWindow):
         self.loading_label.hide()
         self.loading_movie.stop()
         self.solve_button.setEnabled(True)
-        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        logs_dir = app_logs_dir()
         try:
             files = [
                 os.path.join(logs_dir, f)
@@ -790,7 +758,7 @@ class StarRailwayGUI(QMainWindow):
 
     def show_collect_window(self):
         """Open a window displaying all collected combos."""
-        collect_dir = os.path.join(os.path.dirname(__file__), "collect")
+        collect_dir = app_collect_dir()
         combos: List[dict] = []
         if os.path.isdir(collect_dir):
             for name in os.listdir(collect_dir):
@@ -840,7 +808,7 @@ class ResultWindow(QMainWindow):
         self.title_bar = CustomTitleBar(self)
         self.title_bar.title_label.setText(title)
         outer.addWidget(self.title_bar)
-        self.collect_dir = os.path.join(os.path.dirname(__file__), "collect")
+        self.collect_dir = app_collect_dir()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("border: none;")
@@ -926,13 +894,6 @@ class ResultWindow(QMainWindow):
 
 
 class OutputWindow(QMainWindow):
-    """A separate window for viewing output text at full size.
-
-    This window replicates the custom title bar with minimise and
-    close buttons and can be dragged around the screen.  It displays
-    the provided text in a read‑only QTextEdit that fills most of
-    the window.  The window size is fixed to 1637×1088 by default.
-    """
 
     def __init__(self, text: str, parent: QWidget | None = None):
         super().__init__(parent)

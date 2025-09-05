@@ -5,6 +5,7 @@
 import logging
 import os
 import random
+import sys
 import multiprocessing as mp
 from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass
@@ -60,6 +61,21 @@ class ModuleOptimizer:
             exclude_attributes: 排除属性列表, 用于权重为0
         """
         self.logger = _get_logger()
+        # —— 冻结态（PyInstaller）下为 multiprocessing 指定可执行文件，配合 spawn —— 
+        if sys.platform == "win32":
+            # 即使 main() 里已经 freeze_support()，这里再调一次也安全
+            try:
+                mp.freeze_support()
+            except Exception:
+                pass
+            if getattr(sys, "frozen", False):  # 打包后的 exe
+                try:
+                    mp.set_executable(sys.executable)
+                    # 可选：留一条调试日志
+                    self.logger.debug(f"[MP] set_executable -> {sys.executable}")
+                except Exception as e:
+                    self.logger.debug(f"[MP] set_executable failed: {e!r}")
+
         self._result_log_file = None
         self.target_attributes = target_attributes or []
         self.exclude_attributes = exclude_attributes or []
@@ -229,24 +245,26 @@ class ModuleOptimizer:
         # 筛选模组
         top_modules, candidate_modules = self._prefilter_modules(filtered_modules)
         greedy_solutions = []
-        
-        if len(candidate_modules) > self.enumeration_num:
-            self.logger.info("并行策略开始")
-            num_processes = min(2, mp.cpu_count())
+        use_pool = (len(candidate_modules) > self.enumeration_num) and (not getattr(sys, "frozen", False))
+        if use_pool:
+            if len(candidate_modules) > self.enumeration_num:
+                self.logger.info("并行策略开始")
+                num_processes = min(2, mp.cpu_count())
 
-            # 创建进程池, spawn兼容打包环境
-            ctx = mp.get_context('spawn')
-            with ctx.Pool(processes=num_processes) as pool:
-                # 贪心策略
-                greedy_future = pool.apply_async(self._strategy_greedy_local_search, (candidate_modules,))
-                # 枚举策略
-                enum_future = pool.apply_async(self._strategy_enumeration, (top_modules,))
-                
-                greedy_solutions = greedy_future.get()
-                enum_solutions = enum_future.get()
-        else:
-            # 枚举开始
-            enum_solutions = self._strategy_enumeration(top_modules)
+                # 创建进程池, spawn兼容打包环境
+                ctx = mp.get_context('spawn')
+                with ctx.Pool(processes=num_processes) as pool:
+                    # 贪心策略
+                    greedy_future = pool.apply_async(self._strategy_greedy_local_search, (candidate_modules,))
+                    # 枚举策略
+                    enum_future = pool.apply_async(self._strategy_enumeration, (top_modules,))
+                    
+                    greedy_solutions = greedy_future.get()
+                    enum_solutions = enum_future.get()
+            else:
+                # 枚举开始
+                greedy_solutions = self._strategy_greedy_local_search(candidate_modules)
+                enum_solutions = self._strategy_enumeration(top_modules)
 
         all_solution = greedy_solutions + enum_solutions
         unique_solutions = self._complete_deduplicate(all_solution)
