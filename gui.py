@@ -46,11 +46,31 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QGridLayout,
 )
+# ==== Packaging-aware path helpers ====
+def is_frozen() -> bool:
+    return hasattr(sys, "_MEIPASS") or getattr(sys, "frozen", False)
 
+def resource_path(*paths: str) -> str:
+    base = getattr(sys, "_MEIPASS", os.path.dirname(__file__))
+    return os.path.join(base, *paths)
+
+def _app_base_dir() -> str:
+    # Windows LOCALAPPDATA; fallback to user home
+    base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    root = os.path.join(base, "StarResonanceGUI")
+    os.makedirs(os.path.join(root, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(root, "collect"), exist_ok=True)
+    return root
+
+def app_logs_dir() -> str:
+    return os.path.join(_app_base_dir(), "logs")
+
+def app_collect_dir() -> str:
+    return os.path.join(_app_base_dir(), "collect")
 
 SCRIPT_NAME = os.path.join(os.path.dirname(__file__), "star_railway_monitor.py")
 
-BACKGROUND_IMAGE = os.path.join(os.path.dirname(__file__), "assets", "gui_bg_80pct.jpg")
+BACKGROUND_IMAGE = resource_path("assets", "gui_bg_80pct.jpg")
 
 ATTRIBUTES = [
     "力量加持", "敏捷加持", "智力加持", "特攻伤害", "精英打击", "特攻治疗加持", "专精治疗加持",
@@ -204,29 +224,69 @@ class SolverWorker(QThread):
         self.args = args
 
     def run(self):
-        # Compose the full command: python <script> <args>
-        cmd = [sys.executable, SCRIPT_NAME] + self.args
-        print("RUN:", " ".join(cmd))
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-            )
-            
-            if process.stdout:
-                for line in process.stdout:
-                    self.output_signal.emit(line)
-            process.wait()
+            if is_frozen():
+                # Frozen: call solver inline
+                old_cwd = os.getcwd()
+                os.chdir(_app_base_dir())
+                try:
+                    import logging
+                    import importlib
+                    # set up logger handler to forward to GUI
+                    class QtSignalHandler(logging.Handler):
+                        def emit(inner, record):
+                            msg = inner.format(record)
+                            self.output_signal.emit(msg + "\n")
+                    handler = QtSignalHandler()
+                    handler.setFormatter(logging.Formatter("%(message)s"))
+                    root = logging.getLogger()
+                    root.addHandler(handler)
+                    root.setLevel(logging.INFO)
+
+                    # ensure module import works whether bundled or not
+                    try:
+                        import star_railway_monitor as srm
+                    except Exception as ie:
+                        self.output_signal.emit(f"导入 star_railway_monitor 失败: {ie}\\n")
+                        return
+
+                    old_argv = sys.argv[:]
+                    try:
+                        sys.argv = ["star_railway_monitor.py"] + self.args
+                        if hasattr(srm, "main"):
+                            srm.main()
+                        else:
+                            # 猜测入口：如果没有 main，退回到解析器
+                            if hasattr(srm, "run"):
+                                srm.run()
+                            else:
+                                self.output_signal.emit("未找到 star_railway_monitor 的入口函数(main/run)。\\n")
+                    finally:
+                        sys.argv = old_argv
+                        root.removeHandler(handler)
+                finally:
+                    os.chdir(old_cwd)
+            else:
+                # Dev: spawn python process, unify CWD to writable app dir so logs go to the same place
+                cmd = [sys.executable, SCRIPT_NAME] + self.args
+                print("RUN:", " ".join(cmd))
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=_app_base_dir(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                )
+                if process.stdout:
+                    for line in process.stdout:
+                        self.output_signal.emit(line)
+                process.wait()
         except Exception as e:
-            self.output_signal.emit(f"Error running solver: {e}\n")
+            self.output_signal.emit(f"Error running solver: {e}\\n")
         finally:
             self.finished_signal.emit()
-
-
 class CustomTitleBar(QWidget):
     """
     实现最小化和关闭按钮的自定义标题栏。
@@ -452,7 +512,7 @@ class StarRailwayGUI(QMainWindow):
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setStyleSheet("background-color: rgba(0, 0, 0, 0.6);")
         self.loading_movie = QMovie()
-        spinner_path = os.path.join(os.path.dirname(__file__), "assets", "spinner.gif")
+        spinner_path = resource_path("assets", "spinner.gif")
         if os.path.exists(spinner_path):
             self.loading_movie.setFileName(spinner_path)
         self.loading_label.setMovie(self.loading_movie)
@@ -582,7 +642,7 @@ class StarRailwayGUI(QMainWindow):
     def refresh_log_list(self):
         """Scan the ``logs`` directory and populate the list widget."""
         self.log_list.clear()
-        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        logs_dir = app_logs_dir()
         if os.path.isdir(logs_dir):
             files = [f for f in os.listdir(logs_dir) if f.endswith(".log")]
             for fname in sorted(files):
@@ -592,7 +652,7 @@ class StarRailwayGUI(QMainWindow):
     def on_log_clicked(self, item: QListWidgetItem):
         """Load and display the selected log file in the output area."""
         log_name = item.text()
-        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        logs_dir = app_logs_dir()
         path = os.path.join(logs_dir, log_name)
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -672,7 +732,7 @@ class StarRailwayGUI(QMainWindow):
         self.loading_label.hide()
         self.loading_movie.stop()
         self.solve_button.setEnabled(True)
-        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        logs_dir = app_logs_dir()
         try:
             files = [
                 os.path.join(logs_dir, f)
@@ -698,7 +758,7 @@ class StarRailwayGUI(QMainWindow):
 
     def show_collect_window(self):
         """Open a window displaying all collected combos."""
-        collect_dir = os.path.join(os.path.dirname(__file__), "collect")
+        collect_dir = app_collect_dir()
         combos: List[dict] = []
         if os.path.isdir(collect_dir):
             for name in os.listdir(collect_dir):
@@ -748,7 +808,7 @@ class ResultWindow(QMainWindow):
         self.title_bar = CustomTitleBar(self)
         self.title_bar.title_label.setText(title)
         outer.addWidget(self.title_bar)
-        self.collect_dir = os.path.join(os.path.dirname(__file__), "collect")
+        self.collect_dir = app_collect_dir()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("border: none;")

@@ -165,8 +165,8 @@ class ModuleParser:
             # 模组筛选完成后自动退出程序
             self.logger.info("=== 模组筛选完成，准备退出程序 ===")
             import os
-            os._exit(0)
-            
+            #os._exit(0)
+            return
         except ImportError as e:
             self.logger.warning(f"无法导入模组优化器: {e}")
         except Exception as e:

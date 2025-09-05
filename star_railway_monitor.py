@@ -126,6 +126,7 @@ class StarResonanceMonitor:
                     enumeration_mode=self.enumeration_mode,
                     min_attr_sum=self.min_attr_sum
                 )
+                self.stop_monitoring()
                     
         except Exception as e:
             logger.error(f"处理SyncContainerData数据包失败: {e}")
