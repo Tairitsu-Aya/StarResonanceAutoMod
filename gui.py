@@ -850,14 +850,14 @@ class ResultWindow(QMainWindow):
             ).hexdigest()
             collect_path = os.path.join(self.collect_dir, f"{combo_hash}.json")
             star_button = QPushButton("☆")
-            star_button.setFixedSize(24, 24)
+            star_button.setFixedSize(48, 48)
             star_button.setStyleSheet(
-                "QPushButton { border: none; background: transparent; color: white; }"
+                "QPushButton { border: none; background: transparent; color: white; font-size: 28px; }"
             )
             if os.path.exists(collect_path):
                 star_button.setText("★")
                 star_button.setStyleSheet(
-                    "QPushButton { border: none; background: transparent; color: yellow; }"
+                    "QPushButton { border: none; background: transparent; color: yellow; font-size: 28px; }"
                 )
             star_button.clicked.connect(
                 lambda _, path=collect_path, combo=combo, btn=star_button: self.toggle_collect(path, combo, btn)
@@ -893,7 +893,7 @@ class ResultWindow(QMainWindow):
             os.remove(path)
             button.setText("☆")
             button.setStyleSheet(
-                "QPushButton { border: none; background: transparent; color: white; }"
+                "QPushButton { border: none; background: transparent; color: white; font-size: 28px;}"
             )
         else:
             os.makedirs(self.collect_dir, exist_ok=True)
@@ -901,7 +901,7 @@ class ResultWindow(QMainWindow):
                 json.dump(combo, f, ensure_ascii=False, indent=2)
             button.setText("★")
             button.setStyleSheet(
-                "QPushButton { border: none; background: transparent; color: yellow; }"
+                "QPushButton { border: none; background: transparent; color: yellow; font-size: 28px;}"
             )
 
 
