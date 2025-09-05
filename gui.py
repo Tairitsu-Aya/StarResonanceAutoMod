@@ -36,6 +36,7 @@ can adjust ``SCRIPT_NAME`` below.
 """
 
 import os
+import re
 import sys
 import subprocess
 from typing import List
@@ -77,6 +78,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QFrame,
     QSplitter,
+    QScrollArea,
+    QGridLayout,
 )
 
 # Path to the solver script.  You can modify this constant if your
@@ -116,6 +119,64 @@ CATEGORIES = {
 # correspond to the ``--match-count`` parameter.  You can adjust the
 # range or individual options here.
 MATCH_COUNTS = [1, 2, 3, 4, 5]
+
+
+def parse_log_file(path: str) -> List[dict]:
+    """Parse a solver log file and extract combination information."""
+    combos: List[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            lines: List[str] = []
+            for line in fh:
+                stripped = line.strip()
+                if stripped.startswith("=" * 50) or stripped.startswith("模组搭配优化 -"):
+                    continue
+                if stripped.startswith("统计信息"):
+                    break
+                if stripped:
+                    lines.append(stripped)
+        text = "\n".join(lines)
+        pattern = r"=== 第(\d+)名搭配 ==="
+        parts = re.split(pattern, text)
+        for i in range(1, len(parts), 2):
+            rank = int(parts[i])
+            block = parts[i + 1]
+            combo = _parse_block(block)
+            combo["rank"] = rank
+            combos.append(combo)
+    except Exception:
+        return []
+    return combos
+
+
+def _parse_block(block: str) -> dict:
+    """Parse a single combination block."""
+    total = ""
+    power = ""
+    modules: List[str] = []
+    attrs: List[str] = []
+    lines = [l for l in block.splitlines() if l.strip()]
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith("总属性值"):
+            total = line
+        elif line.startswith("战斗力"):
+            power = line
+        elif line.startswith("模组列表"):
+            i += 1
+            while i < len(lines) and not lines[i].startswith("属性分布"):
+                modules.append(lines[i].strip())
+                i += 1
+            continue
+        elif line.startswith("属性分布"):
+            i += 1
+            while i < len(lines):
+                attrs.append(lines[i].strip())
+                i += 1
+            break
+        i += 1
+    return {"total": total, "power": power, "modules": modules, "attrs": attrs}
 
 
 class CheckableComboBox(QComboBox):
@@ -673,21 +734,103 @@ class StarRailwayGUI(QMainWindow):
 
     def append_output(self, text: str):
         """Append a line of output to the output area."""
-        self.output_edit.moveCursor(self.output_edit.textCursor().End)
-        self.output_edit.insertPlainText(text)
+        self.output_edit.append(text.rstrip("\n"))
         self.output_edit.ensureCursorVisible()
 
     def on_solver_finished(self):
-        """Clean up after the solver finishes."""
+        """Clean up after the solver finishes and display results."""
         self.loading_label.hide()
         self.loading_movie.stop()
         self.solve_button.setEnabled(True)
+        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        try:
+            files = [
+                os.path.join(logs_dir, f)
+                for f in os.listdir(logs_dir)
+                if f.endswith(".log")
+            ]
+            if files:
+                latest = max(files, key=os.path.getmtime)
+                combos = parse_log_file(latest)
+                if combos:
+                    self.result_window = ResultWindow(combos, self)
+                    self.result_window.show()
+        except Exception as e:
+            self.append_output(f"解析日志失败: {e}\n")
+        self.refresh_log_list()
 
     def show_output_window(self):
         """Open a new resizable window to display the full output text."""
         text = self.output_edit.toPlainText()
         window = OutputWindow(text, self)
         window.show()
+
+
+class ResultWindow(QMainWindow):
+    """Display parsed solver results in a scrollable grid layout."""
+
+    def __init__(self, combos: List[dict], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.resize(1637, 1088)
+        central = QWidget()
+        central.setObjectName("resultWindowCentral")
+        outer = QVBoxLayout()
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(5)
+        central.setLayout(outer)
+        central.setStyleSheet(
+            "#resultWindowCentral { background-color: rgba(0, 0, 0, 0.8); border-radius: 8px; }"
+        )
+        self.title_bar = CustomTitleBar(self)
+        self.title_bar.title_label.setText("搭配结果")
+        outer.addWidget(self.title_bar)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none;")
+        container = QWidget()
+        grid = QGridLayout()
+        grid.setContentsMargins(5, 5, 5, 5)
+        grid.setSpacing(5)
+        container.setLayout(grid)
+        for i, combo in enumerate(combos):
+            frame = QFrame()
+            frame.setStyleSheet(
+                "background-color: rgba(0, 0, 0, 0.7); color: white; border-radius: 5px;"
+            )
+            vbox = QVBoxLayout()
+            vbox.setContentsMargins(5, 5, 5, 5)
+            frame.setLayout(vbox)
+            lines: List[str] = []
+            if combo.get("rank") is not None:
+                lines.append(f"第{combo['rank']}名搭配")
+            if combo.get("total"):
+                lines.append(combo["total"])
+            if combo.get("power"):
+                lines.append(combo["power"])
+            if combo.get("modules"):
+                lines.append("模组列表:")
+                lines.extend(combo["modules"])
+            if combo.get("attrs"):
+                lines.append("属性分布:")
+                lines.extend(combo["attrs"])
+            text_edit = QTextEdit("\n".join(lines))
+            text_edit.setReadOnly(True)
+            text_edit.setStyleSheet(
+                "background: transparent; color: white; border: none; font-size: 20px;"
+            )
+            text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            text_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            text_edit.document().setTextWidth(780)
+            text_edit.setMinimumHeight(int(text_edit.document().size().height()) + 5)
+            vbox.addWidget(text_edit)
+            grid.addWidget(frame, i // 2, i % 2)
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+        outer.setStretchFactor(scroll, 1)
+        self.setCentralWidget(central)
 
 
 class OutputWindow(QMainWindow):
