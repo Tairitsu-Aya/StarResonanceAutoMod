@@ -806,7 +806,7 @@ class ResultWindow(QMainWindow):
             frame.setLayout(vbox)
             rank = combo.get("rank", i + 1)
             rank_label = QLabel(f"第{rank}名")
-            rank_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+            rank_label.setStyleSheet("font-weight: bold; font-size: 24px;")
             vbox.addWidget(rank_label)
             lines: List[str] = []
             if combo.get("total"):
@@ -822,13 +822,15 @@ class ResultWindow(QMainWindow):
             label = QLabel("\n".join(lines))
             label.setWordWrap(True)
             label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            label.setStyleSheet("font-size: 14px;")
+            label.setStyleSheet("font-size: 22px;")
             vbox.addWidget(label)
             grid.addWidget(frame, i // 2, i % 2)
         scroll.setWidget(container)
         outer.addWidget(scroll)
         outer.setStretchFactor(scroll, 1)
         self.setCentralWidget(central)
+        #self.setStyleSheet("* { font-size: 22px; }")
+
 
 
 class OutputWindow(QMainWindow):
