@@ -39,6 +39,8 @@ import os
 import re
 import sys
 import subprocess
+import json
+import hashlib
 from typing import List
 
 from PyQt5.QtCore import (
@@ -504,6 +506,15 @@ class StarRailwayGUI(QMainWindow):
         )
         self.expand_output_button.clicked.connect(self.show_output_window)
         button_row.addWidget(self.expand_output_button)
+        # View collection button
+        self.view_collect_button = QPushButton("查看收藏")
+        self.view_collect_button.setFixedHeight(24)
+        self.view_collect_button.setStyleSheet(
+            "QPushButton { background-color: rgba(0, 120, 215, 0.8); color: white; border: none; padding: 4px 8px; }"
+            "QPushButton:hover { background-color: rgba(0, 120, 215, 1.0); }"
+        )
+        self.view_collect_button.clicked.connect(self.show_collect_window)
+        button_row.addWidget(self.view_collect_button)
         button_row.addStretch(1)
         bottom_layout.addLayout(button_row)
         # Add the output text edit underneath
@@ -766,11 +777,34 @@ class StarRailwayGUI(QMainWindow):
         window = OutputWindow(text, self)
         window.show()
 
+    def show_collect_window(self):
+        """Open a window displaying all collected combos."""
+        collect_dir = os.path.join(os.path.dirname(__file__), "collect")
+        combos: List[dict] = []
+        if os.path.isdir(collect_dir):
+            for name in os.listdir(collect_dir):
+                if name.endswith(".json"):
+                    path = os.path.join(collect_dir, name)
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            combos.append(json.load(f))
+                    except Exception:
+                        pass
+        if combos:
+            self.collect_window = ResultWindow(combos, self, title="收藏夹")
+            self.collect_window.show()
+
 
 class ResultWindow(QMainWindow):
     """Display parsed solver results in a scrollable grid layout."""
 
-    def __init__(self, combos: List[dict], parent: QWidget | None = None):
+    def __init__(
+        self,
+        combos: List[dict],
+        parent: QWidget | None = None,
+        *,
+        title: str = "搭配结果",
+    ):
         super().__init__(parent)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -785,8 +819,9 @@ class ResultWindow(QMainWindow):
             "#resultWindowCentral { background-color: rgba(0, 0, 0, 0.8); border-radius: 8px; }"
         )
         self.title_bar = CustomTitleBar(self)
-        self.title_bar.title_label.setText("搭配结果")
+        self.title_bar.title_label.setText(title)
         outer.addWidget(self.title_bar)
+        self.collect_dir = os.path.join(os.path.dirname(__file__), "collect")
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("border: none;")
@@ -805,9 +840,30 @@ class ResultWindow(QMainWindow):
             vbox.setSpacing(8)
             frame.setLayout(vbox)
             rank = combo.get("rank", i + 1)
+            top_row = QHBoxLayout()
             rank_label = QLabel(f"第{rank}名")
             rank_label.setStyleSheet("font-weight: bold; font-size: 24px;")
-            vbox.addWidget(rank_label)
+            top_row.addWidget(rank_label)
+            top_row.addStretch(1)
+            combo_hash = hashlib.md5(
+                json.dumps(combo, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+            collect_path = os.path.join(self.collect_dir, f"{combo_hash}.json")
+            star_button = QPushButton("☆")
+            star_button.setFixedSize(24, 24)
+            star_button.setStyleSheet(
+                "QPushButton { border: none; background: transparent; color: white; }"
+            )
+            if os.path.exists(collect_path):
+                star_button.setText("★")
+                star_button.setStyleSheet(
+                    "QPushButton { border: none; background: transparent; color: yellow; }"
+                )
+            star_button.clicked.connect(
+                lambda _, path=collect_path, combo=combo, btn=star_button: self.toggle_collect(path, combo, btn)
+            )
+            top_row.addWidget(star_button)
+            vbox.addLayout(top_row)
             lines: List[str] = []
             if combo.get("total"):
                 lines.append(combo["total"])
@@ -830,6 +886,23 @@ class ResultWindow(QMainWindow):
         outer.setStretchFactor(scroll, 1)
         self.setCentralWidget(central)
         #self.setStyleSheet("* { font-size: 22px; }")
+
+    def toggle_collect(self, path: str, combo: dict, button: QPushButton) -> None:
+        """Toggle collection state for a combo and update button appearance."""
+        if os.path.exists(path):
+            os.remove(path)
+            button.setText("☆")
+            button.setStyleSheet(
+                "QPushButton { border: none; background: transparent; color: white; }"
+            )
+        else:
+            os.makedirs(self.collect_dir, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(combo, f, ensure_ascii=False, indent=2)
+            button.setText("★")
+            button.setStyleSheet(
+                "QPushButton { border: none; background: transparent; color: yellow; }"
+            )
 
 
 
