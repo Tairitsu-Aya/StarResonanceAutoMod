@@ -127,11 +127,24 @@ class ModuleOptimizer:
 
     def get_cpu_count(self) -> int:
         """获取CPU核心数"""
+        count: Optional[int] = None
         try:
-            return psutil.cpu_count(logical=True)
+            count = psutil.cpu_count(logical=True)
         except (NotImplementedError, OSError, RuntimeError):
-            pass
-        return 8
+            # psutil may not work in frozen environments
+            self.logger.debug("psutil.cpu_count failed", exc_info=True)
+
+        if not count or count < 1:
+            # fallback to Python's os.cpu_count or at least 1
+            try:
+                count = os.cpu_count()
+            except Exception:
+                count = None
+
+        if not count or count < 1:
+            count = 1
+
+        return min(self.max_workers, int(count))
     
     def get_module_category(self, module: ModuleInfo) -> ModuleCategory:
         """获取模组类型分类
@@ -258,13 +271,17 @@ class ModuleOptimizer:
                     greedy_future = pool.apply_async(self._strategy_greedy_local_search, (candidate_modules,))
                     # 枚举策略
                     enum_future = pool.apply_async(self._strategy_enumeration, (top_modules,))
-                    
+
                     greedy_solutions = greedy_future.get()
                     enum_solutions = enum_future.get()
             else:
                 # 枚举开始
                 greedy_solutions = self._strategy_greedy_local_search(candidate_modules)
                 enum_solutions = self._strategy_enumeration(top_modules)
+        else:
+            # 在打包环境或模组数量较少时不使用进程池
+            greedy_solutions = self._strategy_greedy_local_search(candidate_modules)
+            enum_solutions = self._strategy_enumeration(top_modules)
 
         all_solution = greedy_solutions + enum_solutions
         unique_solutions = self._complete_deduplicate(all_solution)
