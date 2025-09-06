@@ -4,6 +4,7 @@
 
 import logging
 import os
+import sys
 from datetime import datetime
 
 
@@ -23,10 +24,14 @@ def setup_logging(level=logging.INFO, debug_mode=False):
     if debug_mode:
         level = logging.DEBUG
     
-    # 创建日志目录
-    log_dir = "logs"
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    # 创建日志目录，打包环境下放在可执行文件所在目录
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    log_dir = os.path.join(base_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
     
     # 生成日志文件名（包含时间戳）
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -44,15 +49,32 @@ def setup_logging(level=logging.INFO, debug_mode=False):
     console_handler.setFormatter(formatter)
     
     # 文件处理器
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setLevel(level)
-    file_handler.setFormatter(formatter)
+    file_handler = None
+    try:
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+    except OSError as e:
+        # 打包环境可能无写入权限，打印警告但不中断程序
+        print(f"[WARN] 无法创建日志文件 {log_file}: {e}")
     
     # 配置根日志器
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
     root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+    if file_handler:
+        root_logger.addHandler(file_handler)
+
+    # 捕获未处理的异常并写入日志
+    def _handle_exception(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            return
+        logging.getLogger().error(
+            "Uncaught exception",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )
+
+    sys.excepthook = _handle_exception
     
     # 记录日志配置信息
     logger = logging.getLogger(__name__)
@@ -70,4 +92,4 @@ def get_logger(name):
     Returns:
         Logger实例
     """
-    return logging.getLogger(name) 
+    return logging.getLogger(name)

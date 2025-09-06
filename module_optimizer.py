@@ -399,15 +399,19 @@ class ModuleOptimizer:
                 if aid is not None:
                     min_attr_id_requirements[aid] = int(val)
 
-        cpp_solutions = strategy_enumeration_cpp(
-            cpp_modules,
-            target_attrs_set,
-            exclude_attrs_set,
-            min_attr_id_requirements,    
-            self.max_solutions,
-            self.get_cpu_count()
-        )
-        
+        try:
+            cpp_solutions = strategy_enumeration_cpp(
+                cpp_modules,
+                target_attrs_set,
+                exclude_attrs_set,
+                min_attr_id_requirements,
+                self.max_solutions,
+                self.get_cpu_count()
+            )
+        except Exception as e:
+            self.logger.error(f"strategy_enumeration_cpp failed: {e}", exc_info=True)
+            return []
+
         result = self._convert_from_cpp_solutions(cpp_solutions)
 
         return result
