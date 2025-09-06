@@ -391,13 +391,18 @@ class ModuleOptimizer:
             for attr_str in self.exclude_attributes:
                 exclude_attributes_id.append(MODULE_ATTR_IDS.get(attr_str))
         exclude_attrs_set = set(exclude_attributes_id)
-        
+
         min_attr_id_requirements: Dict[int, int] = {}
         if self.min_attr_sum_requirements:
             for name, val in self.min_attr_sum_requirements.items():
                 aid = MODULE_ATTR_IDS.get(name)
                 if aid is not None:
                     min_attr_id_requirements[aid] = int(val)
+
+        # psutil 在某些冻结环境中可能返回 0 或 None，导致传递到 C++ 层的线程数
+        # 为 0，从而引发除零错误并使进程直接退出。这里进行保护，确保线程数
+        # 至少为 1。
+        worker_count = max(1, int(self.get_cpu_count()))
 
         try:
             cpp_solutions = strategy_enumeration_cpp(
@@ -406,10 +411,13 @@ class ModuleOptimizer:
                 exclude_attrs_set,
                 min_attr_id_requirements,
                 self.max_solutions,
-                self.get_cpu_count()
+                worker_count
             )
         except Exception as e:
-            self.logger.error(f"strategy_enumeration_cpp failed: {e}", exc_info=True)
+            # 记录异常并返回空列表，避免上层逻辑崩溃
+            self.logger.error(
+                f"strategy_enumeration_cpp failed: {e}", exc_info=True
+            )
             return []
 
         result = self._convert_from_cpp_solutions(cpp_solutions)

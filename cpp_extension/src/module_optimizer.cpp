@@ -200,6 +200,11 @@ std::vector<ModuleSolution> ModuleOptimizerCpp::StrategyEnumeration(
     const std::unordered_map<int, int>& min_attr_sum_requirements,
     int max_solutions,
     int max_workers) {
+    // 防御性编程：在极端环境下传入的线程数可能为 0，进而在后续的批次计算
+    // 中触发除零异常。这里进行保护，确保至少启用 1 个工作线程。
+    if (max_workers < 1) {
+        max_workers = 1;
+    }
 
     std::vector<ModuleInfo> candidate_modules = modules;
     // 计算组合
